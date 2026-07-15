@@ -4,6 +4,9 @@ import fs from "fs";
 import path from "path";
 import pino from "pino";
 
+process.on("uncaughtException", (e) => console.error("[FATAL]", e.stack || e.message));
+process.on("unhandledRejection", (r) => console.error("[FATAL]", r?.stack || r?.message || r));
+
 const PORT = parseInt(process.env.PORT || "8080", 10);
 const APP_URL = (process.env.APP_URL || "https://jobayer-group-career.workers.dev").replace(/\/+$/, "");
 const AUTH_DIR = process.env.AUTH_DIR || path.join(process.cwd(), "data", "auth");
