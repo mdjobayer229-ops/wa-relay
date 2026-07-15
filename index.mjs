@@ -1,4 +1,4 @@
-import { makeWASocket, DisconnectReason, fetchLatestBaileysVersion, useMultiFileAuthState } from "@whiskeysockets/baileys";
+import { makeWASocket, DisconnectReason, fetchLatestBaileysVersion, useMultiFileAuthState, Browsers } from "@whiskeysockets/baileys";
 import WebSocket from "ws";
 import http from "http";
 import fs from "fs";
@@ -50,16 +50,13 @@ async function startConnection() {
   qrCode = null;
 
   try {
-    let version;
     try {
-      const v = await fetchLatestBaileysVersion();
-      version = v.version;
+      const { version } = await fetchLatestBaileysVersion();
       logInfo(`Latest WA protocol v${version.join(".")}`);
     } catch {
       logInfo("Using default Baileys version");
     }
 
-    logInfo("Loading auth state...");
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
     logInfo(`Auth state loaded — registered: ${!!state.creds?.registered}`);
     const baileysLogger = pino({ level: "debug", name: "baileys" }, {
@@ -67,20 +64,21 @@ async function startConnection() {
         try {
           const d = JSON.parse(msg);
           const lvl = d.level >= 50 ? "ERR" : d.level >= 40 ? "WARN" : d.level >= 30 ? "INFO" : "DEBUG";
-          log(lvl, `[Baileys] ${d.msg || ""}${d.err ? " — " + d.err.message : ""}`);
+          let line = `[Baileys] ${d.msg || ""}`;
+          if (d.err) line += ` — ${d.err.message}${d.err.stack ? " (" + d.err.stack.split("\n")[0] + ")" : ""}`;
+          log(lvl, line);
         } catch {}
       },
     });
 
     const socketConfig = {
-      version: version,
       auth: state,
       printQRInTerminal: false,
-      browser: ["Jobayer Group Relay", "Chrome", ""],
+      browser: Browsers.macOS("Chrome"),
       syncFullHistory: false,
       logger: baileysLogger,
-      connectTimeoutMs: 60000,
-      keepAliveIntervalMs: 25000,
+      connectTimeoutMs: 120000,
+      keepAliveIntervalMs: 15000,
       markOnlineOnConnect: false,
     };
 
@@ -392,6 +390,12 @@ function startServer() {
         jsonResponse(res, { ok: true });
       } else if (path === "/stop" && req.method === "POST") {
         stopConnection();
+        jsonResponse(res, { ok: true });
+      } else if (path === "/reset" && req.method === "POST") {
+        stopConnection();
+        try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }); } catch {}
+        fs.mkdirSync(AUTH_DIR, { recursive: true });
+        startConnection();
         jsonResponse(res, { ok: true });
       } else {
         jsonResponse(res, { error: "Not found" }, 404);
