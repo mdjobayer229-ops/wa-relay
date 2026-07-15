@@ -134,7 +134,7 @@ async function startConnection() {
       for (const msg of messages) {
         if (msg.key?.fromMe) continue;
         const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || "";
-        const phone = msg.key?.remoteJid?.replace("@s.whatsapp.net", "") || "";
+        const phone = msg.key?.remoteJid?.split("@")[0] || "";
         if (!text || !phone) continue;
 
         receivedCount++;
