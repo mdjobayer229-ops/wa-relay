@@ -3,6 +3,8 @@ import http from "http";
 import fs from "fs";
 import path from "path";
 import pino from "pino";
+import net from "net";
+import dns from "dns";
 
 process.on("uncaughtException", (e) => console.error("[FATAL]", e.stack || e.message));
 process.on("unhandledRejection", (r) => console.error("[FATAL]", r?.stack || r?.message || r));
@@ -424,6 +426,29 @@ function startServer() {
       } else if (path === "/logs") {
         const limit = Math.min(parseInt(url.searchParams.get("limit") || "100"), 500);
         jsonResponse(res, logs.slice(0, limit));
+      } else if (path === "/diag") {
+        (async () => {
+          const result = { node: process.version, tests: [] };
+          const hosts = ["web.whatsapp.com", "w1.web.whatsapp.com", "w2.web.whatsapp.com", "v1.web.whatsapp.com"];
+          for (const host of hosts) {
+            try {
+              const addrs = await new Promise((res, rej) => dns.resolve4(host, (e, a) => e ? rej(e) : res(a)));
+              const tcpResults = [];
+              for (const addr of addrs.slice(0, 2)) {
+                const ok = await new Promise((r) => {
+                  const s = net.connect(443, addr, () => { s.destroy(); r(true); });
+                  s.on("error", () => { s.destroy(); r(false); });
+                  s.setTimeout(5000, () => { s.destroy(); r(false); });
+                });
+                tcpResults.push({ addr, port443: ok });
+              }
+              result.tests.push({ host, resolved: addrs, tcp: tcpResults });
+            } catch (e) {
+              result.tests.push({ host, error: e.message });
+            }
+          }
+          jsonResponse(res, result);
+        })();
       } else if (path === "/start" && req.method === "POST") {
         startConnection();
         jsonResponse(res, { ok: true });
