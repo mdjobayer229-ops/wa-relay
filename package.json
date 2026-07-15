@@ -7,7 +7,7 @@
     "start": "node index.mjs"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.0",
+    "@whiskeysockets/baileys": "7.0.0-rc13",
     "pino": "^8.0.0"
   }
 }
