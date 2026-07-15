@@ -1,4 +1,4 @@
-import { makeWASocket, DisconnectReason, fetchLatestBaileysVersion } from "@whiskeysockets/baileys";
+import { makeWASocket, DisconnectReason, fetchLatestBaileysVersion, useMultiFileAuthState } from "@whiskeysockets/baileys";
 import WebSocket from "ws";
 import http from "http";
 import fs from "fs";
@@ -18,14 +18,10 @@ const ACCOUNT_ID = process.env.WA_ACCOUNT_ID || "web_main";
 
 if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
 
-const SESSION_FILE = path.join(AUTH_DIR, "wa-session.json");
-
 let sock = null;
 let qrCode = null;
 let connStatus = "disconnected";
 let connError = null;
-let sessionCreds = null;
-let sessionKeys = null;
 let reconnectAttempts = 0;
 let reconnectTimer = null;
 let startTime = null;
@@ -43,63 +39,6 @@ const logInfo = (m) => log("INFO", m);
 const logWarn = (m) => log("WARN", m);
 const logError = (m) => log("ERR", m);
 
-function loadSession() {
-  try {
-    if (fs.existsSync(SESSION_FILE)) {
-      const data = JSON.parse(fs.readFileSync(SESSION_FILE, "utf8"));
-      sessionCreds = data.creds || null;
-      sessionKeys = data.keys || null;
-      logInfo(`Session loaded (creds: ${!!sessionCreds}, keys: ${!!sessionKeys})`);
-    }
-  } catch (e) {
-    logError(`Session load failed: ${e.message}`);
-  }
-}
-
-function saveSession(creds, keys) {
-  sessionCreds = creds;
-  sessionKeys = keys;
-  try {
-    const data = { creds, keys: exportKeys(keys) };
-    fs.writeFileSync(SESSION_FILE, JSON.stringify(data, null, 2));
-  } catch (e) {
-    logError(`Session save failed: ${e.message}`);
-  }
-}
-
-function clearSession() {
-  sessionCreds = null;
-  sessionKeys = null;
-  try {
-    if (fs.existsSync(SESSION_FILE)) fs.unlinkSync(SESSION_FILE);
-  } catch {}
-}
-
-function exportKeys(keys) {
-  if (!keys) return {};
-  const out = {};
-  for (const [key, value] of Object.entries(keys)) {
-    if (value instanceof Map) out[key] = Array.from(value.entries());
-    else if (typeof value === "object" && value !== null) out[key] = value;
-  }
-  return out;
-}
-
-function rebuildKeys(saved) {
-  if (!saved) return {};
-  const keys = {};
-  for (const [type, entries] of Object.entries(saved)) {
-    if (Array.isArray(entries)) {
-      const map = new Map();
-      for (const [id, value] of entries) map.set(id, value);
-      keys[type] = map;
-    } else {
-      keys[type] = entries;
-    }
-  }
-  return keys;
-}
-
 async function startConnection() {
   if (sock) {
     try { sock.end(undefined); } catch {}
@@ -111,16 +50,31 @@ async function startConnection() {
   qrCode = null;
 
   try {
+    let version;
     try {
-      const { version } = await fetchLatestBaileysVersion();
+      const v = await fetchLatestBaileysVersion();
+      version = v.version;
       logInfo(`Latest WA protocol v${version.join(".")}`);
     } catch {
       logInfo("Using default Baileys version");
     }
 
-    const baileysLogger = pino({ level: "info", name: "baileys" });
+    logInfo("Loading auth state...");
+    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+    logInfo(`Auth state loaded — registered: ${!!state.creds?.registered}`);
+    const baileysLogger = pino({ level: "debug", name: "baileys" }, {
+      write: (msg) => {
+        try {
+          const d = JSON.parse(msg);
+          const lvl = d.level >= 50 ? "ERR" : d.level >= 40 ? "WARN" : d.level >= 30 ? "INFO" : "DEBUG";
+          log(lvl, `[Baileys] ${d.msg || ""}${d.err ? " — " + d.err.message : ""}`);
+        } catch {}
+      },
+    });
 
     const socketConfig = {
+      version: version,
+      auth: state,
       printQRInTerminal: false,
       browser: ["Jobayer Group Relay", "Chrome", ""],
       syncFullHistory: false,
@@ -130,37 +84,6 @@ async function startConnection() {
       markOnlineOnConnect: false,
     };
 
-    if (sessionCreds) {
-      const keyStore = rebuildKeys(sessionKeys || {});
-      const keyData = {
-        get: async (type, ids) => {
-          const map = keyStore[type];
-          if (map instanceof Map) {
-            const result = {};
-            for (const id of ids) result[id] = map.get(id) || null;
-            return result;
-          }
-          const result = {};
-          for (const id of ids) result[id] = null;
-          return result;
-        },
-        set: async (data) => {
-          for (const type of Object.keys(data)) {
-            if (!keyStore[type]) keyStore[type] = new Map();
-            const map = keyStore[type];
-            for (const [id, value] of Object.entries(data[type])) {
-              if (value) map.set(id, value);
-              else map.delete(id);
-            }
-          }
-        },
-      };
-      socketConfig.auth = {
-        creds: sessionCreds,
-        keys: keyData,
-      };
-    }
-
     let qrTimeout = setTimeout(() => {
       if (!qrCode && connStatus !== "connected") {
         logWarn("No QR/connect after 30s — WebSocket may be blocked");
@@ -168,6 +91,8 @@ async function startConnection() {
     }, 30000);
 
     sock = makeWASocket(socketConfig);
+
+    sock.ev.on("creds.update", saveCreds);
 
     sock.ev.on("connection.update", async ({ connection, lastDisconnect, qr }) => {
       if (qr) {
@@ -185,19 +110,6 @@ async function startConnection() {
         startTime = Date.now();
         reconnectAttempts = 0;
         logInfo("WhatsApp connected!");
-
-        if (sock?.authState?.creds) {
-          const creds = sock.authState.creds;
-          const keys = sock.authState.keys;
-          const keyData = {};
-          if (keys) {
-            for (const [type, value] of Object.entries(keys)) {
-              if (value instanceof Map) keyData[type] = Array.from(value.entries());
-              else if (typeof value === "object") keyData[type] = value;
-            }
-          }
-          saveSession(creds, keyData);
-        }
       }
 
       if (connection === "close") {
@@ -210,7 +122,7 @@ async function startConnection() {
           connStatus = "disconnected";
           connError = "Logged out";
           qrCode = null;
-          clearSession();
+          try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }); } catch {}
           logWarn("Logged out of WhatsApp");
         } else {
           connStatus = "disconnected";
@@ -248,15 +160,7 @@ async function startConnection() {
       }
     });
 
-    sock.ev.on("creds.update", async () => {
-      try {
-        if (sock?.authState?.creds) {
-          const creds = sock.authState.creds;
-          const keys = sock.authState.keys;
-          saveSession(creds, keys ? { ...keys } : null);
-        }
-      } catch {}
-    });
+
   } catch (e) {
     clearTimeout(qrTimeout);
     connStatus = "error";
@@ -504,7 +408,6 @@ function startServer() {
   });
 }
 
-loadSession();
 startServer();
 startConnection();
 setInterval(pollServerQueue, 5000);
