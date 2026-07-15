@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import pino from "pino";
 import net from "net";
+import tls from "tls";
 import dns from "dns";
 
 process.on("uncaughtException", (e) => console.error("[FATAL]", e.stack || e.message));
@@ -116,7 +117,7 @@ async function startConnection() {
       logInfo("Using default Baileys version");
     }
 
-    const baileysLogger = pino({ level: "warn", name: "baileys" }).child({});
+    const baileysLogger = pino({ level: "info", name: "baileys" });
 
     const socketConfig = {
       printQRInTerminal: false,
@@ -436,16 +437,28 @@ function startServer() {
           for (const host of hosts) {
             try {
               const addrs = await new Promise((res, rej) => dns.resolve4(host, (e, a) => e ? rej(e) : res(a)));
-              const tcpResults = [];
+              const conns = [];
               for (const addr of addrs.slice(0, 2)) {
-                const ok = await new Promise((r) => {
+                const tcpOk = await new Promise((r) => {
                   const s = net.connect(443, addr, () => { s.destroy(); r(true); });
                   s.on("error", () => { s.destroy(); r(false); });
                   s.setTimeout(5000, () => { s.destroy(); r(false); });
                 });
-                tcpResults.push({ addr, port443: ok });
+                let tlsOk = false;
+                let tlsCert = null;
+                if (tcpOk) {
+                  tlsOk = await new Promise((r) => {
+                    const s = tls.connect(443, host, { servername: host }, () => {
+                      tlsCert = s.getPeerCertificate()?.subject?.CN || null;
+                      s.destroy(); r(true);
+                    });
+                    s.on("error", () => { s.destroy(); r(false); });
+                    s.setTimeout(5000, () => { s.destroy(); r(false); });
+                  });
+                }
+                conns.push({ addr, tcp: tcpOk, tls: tlsOk, cert: tlsCert });
               }
-              result.tests.push({ host, resolved: addrs, tcp: tcpResults });
+              result.tests.push({ host, resolved: addrs, connections: conns });
             } catch (e) {
               result.tests.push({ host, error: e.message });
             }
