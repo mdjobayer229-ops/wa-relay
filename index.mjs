@@ -1,4 +1,5 @@
 import { makeWASocket, DisconnectReason, fetchLatestBaileysVersion } from "@whiskeysockets/baileys";
+import WebSocket from "ws";
 import http from "http";
 import fs from "fs";
 import path from "path";
@@ -462,6 +463,23 @@ function startServer() {
             } catch (e) {
               result.tests.push({ host, error: e.message });
             }
+          }
+          // Test actual WebSocket connection
+          try {
+            const wsResult = await new Promise((r) => {
+              const ws = new WebSocket("wss://web.whatsapp.com/ws/chat", {
+                headers: { Origin: "https://web.whatsapp.com" },
+                timeout: 8000,
+                rejectUnauthorized: true,
+              });
+              const timer = setTimeout(() => { ws.close(); r({ status: "timeout" }); }, 8000);
+              ws.on("open", () => { clearTimeout(timer); ws.close(); r({ status: "open" }); });
+              ws.on("error", (e) => { clearTimeout(timer); r({ status: "error", message: e.message }); });
+              ws.on("unexpected-response", (req, res) => { clearTimeout(timer); r({ status: "unexpected_response", code: res.statusCode }); });
+            });
+            result.ws_test = wsResult;
+          } catch (e) {
+            result.ws_test = { status: "exception", message: e.message };
           }
           jsonResponse(res, result);
         })();
