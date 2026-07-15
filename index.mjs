@@ -147,13 +147,21 @@ async function startConnection() {
             body: JSON.stringify({ phone, text, name: "", fromBrowser: true }),
           });
           const data = await res.json();
-          if (data.reply && sock) {
-            await sock.sendMessage(msg.key.remoteJid, { text: data.reply });
-            sentCount++;
-            logInfo(`Reply sent to ${phone}: ${data.reply.substring(0, 80)}`);
+          if (data.reply && sock && connStatus === "connected") {
+            try {
+              await sock.sendMessage(msg.key.remoteJid, { text: data.reply });
+              sentCount++;
+              logInfo(`Reply sent to ${phone}: ${data.reply.substring(0, 80)}`);
+            } catch (sendErr) {
+              logError(`Send failed for ${phone}: ${sendErr.message}`);
+            }
+          } else {
+            if (!data.reply) logWarn(`No reply in webhook response for ${phone} — reply: ${JSON.stringify(data.reply)}, status: ${res.status}`);
+            if (!sock) logWarn(`Socket null for ${phone} — cannot send reply`);
+            if (sock && connStatus !== "connected") logWarn(`Socket not ready for ${phone} — connStatus: ${connStatus}`);
           }
         } catch (e) {
-          logError(`Webhook error for ${phone}: ${e.message}`);
+          logError(`Webhook call failed for ${phone}: ${e.message}`);
         }
       }
     });
