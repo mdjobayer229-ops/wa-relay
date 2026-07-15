@@ -50,9 +50,10 @@ async function startConnection() {
   qrCode = null;
 
   try {
+    let waVersion;
     try {
-      const { version } = await fetchLatestBaileysVersion();
-      logInfo(`Latest WA protocol v${version.join(".")}`);
+      waVersion = (await fetchLatestBaileysVersion()).version;
+      logInfo(`Latest WA protocol v${waVersion.join(".")}`);
     } catch {
       logInfo("Using default Baileys version");
     }
@@ -73,6 +74,7 @@ async function startConnection() {
 
     const socketConfig = {
       auth: state,
+      version: waVersion,
       printQRInTerminal: false,
       browser: Browsers.macOS("Chrome"),
       syncFullHistory: false,
