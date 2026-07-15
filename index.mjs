@@ -109,13 +109,16 @@ async function startConnection() {
   qrCode = null;
 
   try {
-    const { version } = await fetchLatestBaileysVersion();
-    logInfo(`Baileys protocol v${version.join(".")}`);
+    try {
+      const { version } = await fetchLatestBaileysVersion();
+      logInfo(`Latest WA protocol v${version.join(".")}`);
+    } catch {
+      logInfo("Using default Baileys version");
+    }
 
     const baileysLogger = pino({ level: "warn", name: "baileys" }).child({});
 
     const socketConfig = {
-      version,
       printQRInTerminal: false,
       browser: ["Jobayer Group Relay", "Chrome", ""],
       syncFullHistory: false,
