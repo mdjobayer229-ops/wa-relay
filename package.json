@@ -1,0 +1,14 @@
+{
+  "name": "wa-relay",
+  "version": "3.0.0",
+  "description": "WhatsApp relay for Jobayer Group Career — bridges WhatsApp to Cloudflare API",
+  "main": "index.mjs",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "7.0.0-rc13",
+    "pino": "^8.0.0",
+    "ws": "^8.16.0"
+  }
+}
